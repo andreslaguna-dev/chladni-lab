@@ -1,11 +1,12 @@
 """Módulo de audio: generación de tonos sin chasquidos y captura por búfer circular.
 
-Diseñado para alta estabilidad en Linux (ALSA/PulseAudio/PipeWire):
+Diseñado para alta estabilidad en Linux (ALSA/PulseAudio/PipeWire) y Windows (WASAPI/MME):
 - Búfer circular sin bloqueos y sin asignación de memoria en el callback.
 - Rampas suaves de ganancia (anti-clic) y limitador suave contra saturación.
 - Detección y recomendación de dispositivos, con soporte de modo seguro (offline).
 """
 import logging
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
@@ -93,6 +94,7 @@ def list_audio_devices(kind: str = "output") -> List[Dict[str, Any]]:
         return []
 
     channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    is_win = (sys.platform == "win32")
 
     for idx, d in enumerate(all_devs):
         chans = d.get(channel_key, 0)
@@ -108,6 +110,9 @@ def list_audio_devices(kind: str = "output") -> List[Dict[str, Any]]:
 
         is_default = (idx == default_idx)
         name_low = name.lower()
+        hostapi_low = hostapi_name.lower()
+        is_wdm_ks = is_win and ("wdm-ks" in hostapi_low)
+
         # En Linux: pulse/pipewire/default; en Windows: Asignador de sonido Microsoft / primario
         is_preferred_virtual = (
             ("pulse" in name_low)
@@ -116,7 +121,7 @@ def list_audio_devices(kind: str = "output") -> List[Dict[str, Any]]:
             or ("asignador de sonido" in name_low)
             or ("sound mapper" in name_low)
         )
-        recommended = is_default or is_preferred_virtual
+        recommended = (is_default or is_preferred_virtual) and not is_wdm_ks
 
         label_parts = []
         if recommended:
@@ -134,11 +139,12 @@ def list_audio_devices(kind: str = "output") -> List[Dict[str, Any]]:
             "samplerate": sr,
             "is_default": is_default,
             "recommended": recommended,
+            "is_wdm_ks": is_wdm_ks,
             "label": " ".join(label_parts),
         })
 
-    # Ordenar poniendo primero el predeterminado del sistema, luego recomendados y luego por índice
-    devices.sort(key=lambda x: (not x["is_default"], not x["recommended"], x["index"]))
+    # Ordenar poniendo primero el predeterminado del sistema, luego recomendados, dejando WDM-KS al final en Windows
+    devices.sort(key=lambda x: (not x["is_default"], not x["recommended"], x["is_wdm_ks"], x["index"]))
     return devices
 
 
@@ -167,7 +173,17 @@ class ToneGenerator:
 
         self._stream: Optional[Any] = None
         self._device: Optional[int] = None
-        self._scratch = np.zeros(DEFAULT_BLOCK_SIZE * 4, dtype=np.float32)
+        self._alloc_work_buffers(DEFAULT_BLOCK_SIZE * 4)
+
+    def _alloc_work_buffers(self, cap: int) -> None:
+        """Preasigna vectores de trabajo para evitar llamadas a malloc/GC en el hilo de audio."""
+        self._scratch = np.zeros(cap, dtype=np.float32)
+        self._gains = np.zeros(cap, dtype=np.float32)
+        self._f_arr = np.zeros(cap, dtype=np.float64)
+        self._dphi = np.zeros(cap, dtype=np.float64)
+        self._phases = np.zeros(cap, dtype=np.float64)
+        self._idx_f64 = np.arange(cap, dtype=np.float64)
+        self._idx_f32 = np.arange(cap, dtype=np.float32)
 
     @property
     def frequency(self) -> float:
@@ -240,31 +256,42 @@ class ToneGenerator:
 
     def _callback(self, outdata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
         if len(self._scratch) < frames:
-            self._scratch = np.zeros(frames * 2, dtype=np.float32)
+            self._alloc_work_buffers(frames * 2)
 
         sr = self.sr
         cur_f = self._cur_f
         cur_a = self._cur_a
         target_a = self._volume if self._playing else 0.0
 
+        f_arr = self._f_arr[:frames]
+        dphi = self._dphi[:frames]
+        phases = self._phases[:frames]
+        gains = self._gains[:frames]
+        scratch = self._scratch[:frames]
+        idx_f64 = self._idx_f64[:frames]
+        idx_f32 = self._idx_f32[:frames]
+
         if self._sweep_active and not self._sweep_paused:
             total_samples = max(1, int(self._sweep_duration * sr))
             elapsed = self._sweep_samples_elapsed
 
-            # Generar el vector de tiempo continuo muestra a muestra para este bloque
-            sample_indices = elapsed + np.arange(frames, dtype=np.float64)
-            progress = np.clip(sample_indices / total_samples, 0.0, 1.0)
+            # Generar el vector de tiempo continuo muestra a muestra in-place
+            np.add(idx_f64, elapsed, out=f_arr)
+            f_arr /= total_samples
+            np.clip(f_arr, 0.0, 1.0, out=f_arr)
 
             if self._sweep_pingpong and self._sweep_direction == -1:
-                progress = 1.0 - progress
+                np.subtract(1.0, f_arr, out=f_arr)
 
             f0 = self._sweep_f0
             f1 = self._sweep_f1
 
             if self._sweep_log and f0 > 0 and f1 > 0:
-                f_arr = f0 * ((f1 / f0) ** progress)
+                np.power(f1 / f0, f_arr, out=f_arr)
+                f_arr *= f0
             else:
-                f_arr = f0 + (f1 - f0) * progress
+                f_arr *= (f1 - f0)
+                f_arr += f0
 
             self._sweep_samples_elapsed += frames
             if self._sweep_samples_elapsed >= total_samples:
@@ -281,30 +308,33 @@ class ToneGenerator:
             # Modo estático o manual: rampa de frecuencia suave entre bloques
             target_f = self._frequency
             df = (target_f - cur_f) / frames
-            f_arr = cur_f + np.arange(frames, dtype=np.float64) * df
+            np.multiply(idx_f64, df, out=f_arr)
+            f_arr += cur_f
             self._cur_f = target_f
 
-        # Acumulación continua de fase
-        dphi = (2.0 * np.pi / sr) * f_arr
-        phases = self._phase + np.cumsum(dphi)
+        # Acumulación continua de fase in-place
+        np.multiply(f_arr, 2.0 * np.pi / sr, out=dphi)
+        np.cumsum(dphi, out=phases)
+        phases += self._phase
         self._phase = float(phases[-1] % (2.0 * np.pi))
 
         # Rampa suave de amplitud continua para eliminar transitorios y clics
         da = (target_a - cur_a) / frames
-        gains = cur_a + np.arange(frames, dtype=np.float32) * da
+        np.multiply(idx_f32, da, out=gains)
+        gains += cur_a
         self._cur_a = target_a
 
         # Generar onda senoidal en búfer de trabajo preasignado
-        np.sin(phases, out=self._scratch[:frames])
-        self._scratch[:frames] *= gains
+        np.sin(phases, out=scratch)
+        scratch *= gains
 
         # Limitador suave no lineal (soft saturation tanh)
-        np.tanh(self._scratch[:frames], out=self._scratch[:frames])
+        np.tanh(scratch, out=scratch)
 
         # Asignar a los canales de salida sin reasignar memoria
-        outdata[:, 0] = self._scratch[:frames]
+        outdata[:, 0] = scratch
         if outdata.shape[1] > 1:
-            outdata[:, 1] = self._scratch[:frames]
+            outdata[:, 1] = scratch
 
     def start(self, device: Optional[int] = None) -> Tuple[bool, str]:
         """Inicia el stream de salida con latencia configurada para prevenir subdesbordes."""
@@ -425,4 +455,3 @@ class InputMonitor:
                 logger.debug(f"Excepción controlada al cerrar InputStream: {exc}")
             finally:
                 self._stream = None
-

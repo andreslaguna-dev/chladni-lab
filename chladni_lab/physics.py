@@ -73,8 +73,11 @@ def best_mode(
 # --------------------------------------------------------------------------
 # Placa circular (funciones de Bessel ordinarias)
 # --------------------------------------------------------------------------
-# Memoria caché de ceros de Bessel para eficiencia en tiempo real
+# Memoria caché de ceros de Bessel y tablas radiales para eficiencia en tiempo real
 _BESSEL_ZEROS_CACHE: Dict[Tuple[int, int], float] = {}
+_BESSEL_LUT_SIZE = 8192
+_BESSEL_LUT_GRID = np.linspace(0.0, 1.0, _BESSEL_LUT_SIZE, dtype=np.float64)
+_BESSEL_RADIAL_CACHE: Dict[Tuple[int, int], np.ndarray] = {}
 
 
 def get_bessel_zero(m: int, n: int) -> float:
@@ -84,6 +87,17 @@ def get_bessel_zero(m: int, n: int) -> float:
         zeros = sp.jn_zeros(m, n)
         _BESSEL_ZEROS_CACHE[key] = float(zeros[-1])
     return _BESSEL_ZEROS_CACHE[key]
+
+
+def _get_bessel_radial_lut(m: int, n: int) -> np.ndarray:
+    """Obtiene tabla precalculada de J_m(alpha_{m,n} * r) en r in [0, 1]."""
+    key = (m, n)
+    lut = _BESSEL_RADIAL_CACHE.get(key)
+    if lut is None:
+        alpha = get_bessel_zero(m, n)
+        lut = sp.jv(m, alpha * _BESSEL_LUT_GRID)
+        _BESSEL_RADIAL_CACHE[key] = lut
+    return lut
 
 
 def circular_chladni_field(
@@ -110,8 +124,13 @@ def circular_chladni_field(
 
     # Validar que n >= 1 (al menos un círculo nodal o borde)
     n_safe = max(1, n)
-    alpha = get_bessel_zero(m, n_safe)
-    radial = sp.jv(m, alpha * np.clip(r_arr, 0.0, 1.0))
+    r_clipped = np.clip(r_arr, 0.0, 1.0)
+    if r_clipped.size >= 256:
+        lut = _get_bessel_radial_lut(m, n_safe)
+        radial = np.interp(r_clipped, _BESSEL_LUT_GRID, lut)
+    else:
+        alpha = get_bessel_zero(m, n_safe)
+        radial = sp.jv(m, alpha * r_clipped)
     angular = np.cos(m * th_arr)
     return radial * angular
 
@@ -216,4 +235,3 @@ def calibrate_model(
     r2 = max(0.0, min(1.0, r2))
 
     return f0, p, r2
-

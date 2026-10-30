@@ -777,8 +777,9 @@ class MainWindow(QtWidgets.QMainWindow):
         smoothed_peak = self.smoother.update(raw_peak)
         self.last_dominant_freq = smoothed_peak
 
-        self.spec_plot.update_spectrum(freqs, spec, smoothed_peak)
-        self.osc_plot.update_waveform(samples, sr=sr)
+        if self.tabs.currentIndex() == 0:
+            self.spec_plot.update_spectrum(freqs, spec, smoothed_peak)
+            self.osc_plot.update_waveform(samples, sr=sr)
 
         if smoothed_peak is not None:
             note_str, cents = freq_to_note(smoothed_peak)

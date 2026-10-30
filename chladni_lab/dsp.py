@@ -5,11 +5,31 @@ conversión de frecuencia a notas musicales con centésimas, y filtrado adaptati
 Sin dependencias de interfaz gráfica (apto para pruebas sin pantalla).
 """
 import math
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 import numpy as np
 
 SAMPLE_RATE = 44100
 NOTE_NAMES = ["Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"]
+
+_HANN_CACHE: Dict[int, np.ndarray] = {}
+_FREQS_CACHE: Dict[Tuple[int, int], np.ndarray] = {}
+
+
+def _get_hann_window(n: int) -> np.ndarray:
+    win = _HANN_CACHE.get(n)
+    if win is None:
+        win = np.hanning(n)
+        _HANN_CACHE[n] = win
+    return win
+
+
+def _get_rfftfreqs(nfft: int, sr: int) -> np.ndarray:
+    key = (nfft, int(sr))
+    freqs = _FREQS_CACHE.get(key)
+    if freqs is None:
+        freqs = np.fft.rfftfreq(nfft, 1.0 / sr)
+        _FREQS_CACHE[key] = freqs
+    return freqs
 
 
 def analyze_spectrum(
@@ -32,20 +52,15 @@ def analyze_spectrum(
     # Eliminar componente continua (offset DC)
     samples = samples - np.mean(samples)
 
+    window = _get_hann_window(n)
+    nfft = 1 << (max(n, 2) * 4 - 1).bit_length()
+    spec = np.abs(np.fft.rfft(samples * window, nfft)) / (n / 4)
+    freqs = _get_rfftfreqs(nfft, sr)
+
     # Medir valor eficaz (RMS) para rechazar ruido de fondo / silencio
     rms = float(np.sqrt(np.mean(samples ** 2)))
     if rms < min_rms:
-        # Silencio detectado: calcular espectro base pero sin frecuencia dominante
-        window = np.hanning(n)
-        nfft = 1 << (max(n, 2) * 4 - 1).bit_length()
-        spec = np.abs(np.fft.rfft(samples * window, nfft)) / (n / 4)
-        freqs = np.fft.rfftfreq(nfft, 1.0 / sr)
         return freqs, spec, None
-
-    window = np.hanning(n)
-    nfft = 1 << (max(n, 2) * 4 - 1).bit_length()
-    spec = np.abs(np.fft.rfft(samples * window, nfft)) / (n / 4)
-    freqs = np.fft.rfftfreq(nfft, 1.0 / sr)
 
     band = (freqs >= fmin) & (freqs <= fmax)
     idx_band = np.where(band)[0]
@@ -138,4 +153,3 @@ class FrequencySmoother:
     def reset(self):
         self.smoothed_freq = None
         self.silence_count = 0
-

@@ -69,9 +69,9 @@ class SandSimulation:
             # Coordenadas relativas al centro (0.5, 0.5)
             dx = self.x - 0.5
             dy = self.y - 0.5
-            r = np.sqrt(dx * dx + dy * dy)
-            # Normalizar r a [0, 1] dividiendo entre el radio máximo 0.5
-            r_norm = np.clip(r / 0.5, 0.0, 1.0)
+            r = np.hypot(dx, dy)
+            # Normalizar r a [0, 1] multiplicando por 2.0 (1 / 0.5)
+            r_norm = np.clip(r * 2.0, 0.0, 1.0)
             theta = np.arctan2(dy, dx)
 
             amp = np.abs(circular_chladni_field(n, m, r_norm, theta)) + grain
@@ -81,14 +81,15 @@ class SandSimulation:
             self.x += self.rng.standard_normal(self.count) * step_size
             self.y += self.rng.standard_normal(self.count) * step_size
 
-            # Rebote elástico en el borde circular (radio = 0.5)
+            # Rebote elástico en el borde circular (radio = 0.5, umbral 0.495^2 = 0.245025)
             new_dx = self.x - 0.5
             new_dy = self.y - 0.5
-            new_r = np.sqrt(new_dx * new_dx + new_dy * new_dy)
-            outside = new_r > 0.495
+            new_r_sq = new_dx * new_dx + new_dy * new_dy
+            outside = new_r_sq > 0.245025
             if np.any(outside):
-                # Reflejar de vuelta radialmente
-                scale = (0.495 * 2.0 - new_r[outside]) / np.maximum(new_r[outside], 1e-6)
+                # Reflejar de vuelta radialmente calculando sqrt solo en partículas fuera del borde
+                out_r = np.sqrt(new_r_sq[outside])
+                scale = (0.495 * 2.0 - out_r) / np.maximum(out_r, 1e-6)
                 scale = np.clip(scale, 0.1, 0.495)
                 self.x[outside] = 0.5 + new_dx[outside] * scale
                 self.y[outside] = 0.5 + new_dy[outside] * scale
@@ -101,15 +102,18 @@ class SandSimulation:
             self.x += self.rng.standard_normal(self.count) * step_size
             self.y += self.rng.standard_normal(self.count) * step_size
 
-            # Rebote en los bordes del cuadrado [0, 1]
-            self.x = np.where(self.x < 0.0, -self.x, self.x)
-            self.y = np.where(self.y < 0.0, -self.y, self.y)
-            self.x = np.where(self.x > 1.0, 2.0 - self.x, self.x)
-            self.y = np.where(self.y > 1.0, 2.0 - self.y, self.y)
+            # Rebote en los bordes del cuadrado [0, 1] in-place sin reasignar arreglos
+            np.abs(self.x, out=self.x)
+            np.abs(self.y, out=self.y)
+            over_x = self.x > 1.0
+            if np.any(over_x):
+                self.x[over_x] = 2.0 - self.x[over_x]
+            over_y = self.y > 1.0
+            if np.any(over_y):
+                self.y[over_y] = 2.0 - self.y[over_y]
 
             # Recorte de seguridad
             np.clip(self.x, 0.0, 1.0, out=self.x)
             np.clip(self.y, 0.0, 1.0, out=self.y)
 
         return self.x, self.y
-
