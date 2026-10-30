@@ -1,0 +1,20 @@
+# Entornos virtuales (no portables entre PCs ni sistemas operativos)
+.venv/
+venv/
+env/
+
+# Caché de Python y pruebas
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Configuración local de hardware y registros (logs)
+.chladni_config.json
+.chladni_lab_logs/
+*.log
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini

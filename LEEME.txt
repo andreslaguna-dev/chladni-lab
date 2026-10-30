@@ -1,0 +1,35 @@
+PROYECTO LABORATORIO DE CHLADNI - Windows y Linux
+
+Contenido
+- chladni_core.py        Nucleo: audio, deteccion de frecuencia, simulacion
+- chladni_lab.py         Interfaz grafica (PyQt5 + pyqtgraph)
+- chladni_lab/           Paquete modular (audio, dsp, physics, simulation, storage, ui)
+- test_core.py           Pruebas del nucleo (no necesitan audio ni pantalla)
+- requirements.txt       Dependencias de Python
+- iniciar_windows.bat    Iniciador automatico para Windows (crea .venv e inicia la app)
+
+============================================================
+INSTRUCCIONES EN WINDOWS (PowerShell o CMD)
+============================================================
+Opcion 1 (Automatica):
+  Haz doble clic en `iniciar_windows.bat` (o ejecutalo desde la terminal).
+  La primera vez creara el entorno `.venv` e instalara las librerias automaticamente.
+
+Opcion 2 (Manual en PowerShell):
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  python test_core.py
+  python -m chladni_lab --selftest
+  python chladni_lab.py
+
+============================================================
+INSTRUCCIONES EN LINUX MINT / UBUNTU
+============================================================
+  sudo apt install python3-venv libportaudio2
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  python test_core.py
+  python -m chladni_lab --selftest
+  python chladni_lab.py

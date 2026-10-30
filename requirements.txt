@@ -1,0 +1,6 @@
+numpy
+scipy
+sounddevice
+PyQt5
+pyqtgraph
+pytest
