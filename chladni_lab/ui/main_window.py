@@ -769,7 +769,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rms, peak_val, is_clip = calc_signal_metrics(samples)
 
         # Actualizar medidor de nivel VU y saturación
-        self.meter_bar.setValue(int(min(1.0, rms * 4.0) * 100))
+        self.meter_bar.setValue(int(min(1.0, (rms * 4.0) ** 0.5) * 100))
         self.clip_badge.setVisible(is_clip)
 
         # Análisis espectral

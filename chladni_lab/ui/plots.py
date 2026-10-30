@@ -9,7 +9,7 @@ from chladni_lab.physics import chladni_field, circular_chladni_field
 
 
 class SpectrumPlot(pg.PlotWidget):
-    """Gráfico del espectro de Fourier de la señal leída por el cable 3.5 mm."""
+    """Gráfico del espectro de Fourier de la señal de entrada (micrófono o cable 3.5 mm)."""
 
     def __init__(self, parent=None):
         super().__init__(parent=parent, title="Espectro en frecuencia (FFT)")
@@ -34,14 +34,18 @@ class SpectrumPlot(pg.PlotWidget):
         f_sub = freqs[mask]
         s_sub = spec[mask]
 
-        if len(f_sub) > 1024:
-            # Decimación para renderizado fluido a 25 FPS sin sobrecargar la CPU
-            step = len(f_sub) // 512
-            f_sub = f_sub[::step]
-            s_sub = s_sub[::step]
+        if len(f_sub) > 2500:
+            # Decimación conservando picos (max-pooling por bloque) para no perder tonos estrechos
+            step = len(f_sub) // 1250
+            n_blocks = len(f_sub) // step
+            f_sub = f_sub[: n_blocks * step : step]
+            s_sub = np.max(s_sub[: n_blocks * step].reshape(n_blocks, step), axis=1)
 
-        max_val = np.max(s_sub) if len(s_sub) > 0 else 0.0
-        norm_spec = (s_sub / max_val) if max_val > 1e-9 else s_sub
+        max_val = float(np.max(s_sub)) if len(s_sub) > 0 else 0.0
+        # Piso suave (1e-4) para que el ruido térmico en silencio no se amplifique al 100%,
+        # pero cualquier silbido o tono eleve claramente el pico hasta 1.0
+        denom = max(max_val, 1e-4)
+        norm_spec = s_sub / denom
         self.curve.setData(f_sub, norm_spec)
 
         if peak is not None and peak > 0:
@@ -52,7 +56,7 @@ class SpectrumPlot(pg.PlotWidget):
 
 
 class OscilloscopePlot(pg.PlotWidget):
-    """Osciloscopio en tiempo real para visualizar la forma de onda eléctrica."""
+    """Osciloscopio en tiempo real con auto-escala vertical suave para micrófono y línea."""
 
     def __init__(self, parent=None):
         super().__init__(parent=parent, title="Osciloscopio (señal en tiempo real)")
@@ -68,6 +72,7 @@ class OscilloscopePlot(pg.PlotWidget):
         self.addItem(self.clip_bot)
 
         self.wave_curve = self.plot(pen=pg.mkPen("#00cc88", width=1.8))
+        self._y_scale = 0.15
 
     def update_waveform(self, samples: np.ndarray, sr: int = 44100) -> None:
         if len(samples) == 0:
@@ -77,9 +82,21 @@ class OscilloscopePlot(pg.PlotWidget):
         # Mostrar aproximadamente 25 a 30 ms para una visualización clara de ondas entre 50 y 2000 Hz
         window_samples = min(len(samples), int(sr * 0.03))
         display_data = samples[-window_samples:]
+        # Centrar eliminando offset DC para que ondas débiles de micrófono sean simétricas
+        display_data = display_data - np.mean(display_data)
         t_ms = (np.arange(window_samples) / sr) * 1000.0
 
+        # Auto-escala vertical suave: permite ver tanto silbidos suaves en micrófono (±0.01)
+        # como señales fuertes por cable (±1.15)
+        peak = float(np.max(np.abs(display_data))) if len(display_data) > 0 else 0.0
+        target_scale = max(0.008, min(1.15, peak * 1.35))
+        if target_scale > self._y_scale:
+            self._y_scale = 0.4 * self._y_scale + 0.6 * target_scale
+        else:
+            self._y_scale = 0.85 * self._y_scale + 0.15 * target_scale
+
         self.setXRange(0, t_ms[-1], padding=0.0)
+        self.setYRange(-self._y_scale, self._y_scale, padding=0.0)
         self.wave_curve.setData(t_ms, display_data)
 
 
@@ -231,4 +248,3 @@ class PlatePlot(pg.PlotWidget):
             return pixmap.save(str(filepath), "PNG")
         except Exception:
             return False
-

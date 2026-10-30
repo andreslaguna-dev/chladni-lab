@@ -43,6 +43,8 @@ def analyze_spectrum(
 
     Utiliza una ventana de Hann, zero-padding x4 e interpolación parabólica
     sobre el logaritmo de la magnitud para lograr una precisión de detección < 0.05 Hz.
+    Incluye detección por prominencia espectral (SNR) para captar silbidos y tonos
+    suaves de micrófono sin dispararse con ruido blanco de fondo.
     """
     samples = np.asarray(samples, dtype=np.float64)
     n = len(samples)
@@ -57,9 +59,9 @@ def analyze_spectrum(
     spec = np.abs(np.fft.rfft(samples * window, nfft)) / (n / 4)
     freqs = _get_rfftfreqs(nfft, sr)
 
-    # Medir valor eficaz (RMS) para rechazar ruido de fondo / silencio
+    # Medir valor eficaz (RMS)
     rms = float(np.sqrt(np.mean(samples ** 2)))
-    if rms < min_rms:
+    if rms < 3e-5:
         return freqs, spec, None
 
     band = (freqs >= fmin) & (freqs <= fmax)
@@ -67,7 +69,18 @@ def analyze_spectrum(
     if len(idx_band) == 0:
         return freqs, spec, None
 
-    k = idx_band[np.argmax(spec[idx_band])]
+    band_spec = spec[idx_band]
+    local_idx = int(np.argmax(band_spec))
+    k = int(idx_band[local_idx])
+    peak_mag = float(band_spec[local_idx])
+
+    # Si el nivel RMS es bajo (micrófono con poca ganancia), exigir que exista un pico
+    # tonal claro sobre la mediana del piso de ruido (SNR >= 10x) para aceptar la señal
+    if rms < min_rms:
+        median_mag = float(np.median(band_spec)) + 1e-12
+        if peak_mag < 1.5e-5 or (peak_mag / median_mag) < 10.0:
+            return freqs, spec, None
+
     if k <= 0 or k >= len(spec) - 1:
         return freqs, spec, float(freqs[k])
 
