@@ -7,6 +7,22 @@ from chladni_lab.physics import calibrate_model
 from chladni_lab.storage import ExperimentRecord
 
 
+class FlexibleDoubleSpinBox(QtWidgets.QDoubleSpinBox):
+    """QDoubleSpinBox que acepta tanto punto (.) como coma (,) como separador decimal."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setLocale(QtCore.QLocale(QtCore.QLocale.C))
+
+    def validate(self, text: str, pos: int) -> Tuple[QtGui.QValidator.State, str, int]:
+        normalized = text.replace(",", ".")
+        return super().validate(normalized, pos)
+
+    def valueFromText(self, text: str) -> float:
+        normalized = text.replace(",", ".")
+        return super().valueFromText(normalized)
+
+
 class CalibrationDialog(QtWidgets.QDialog):
     """Asistente de calibración por mínimos cuadrados a partir de frecuencias reales medidas."""
 
@@ -26,8 +42,8 @@ class CalibrationDialog(QtWidgets.QDialog):
 
         info = QtWidgets.QLabel(
             "<b>Ajuste del modelo físico f = f0 · (K)<sup>p</sup></b><br>"
-            "Ingresa 2 o más observaciones (frecuencia medida en Hz y modo observado n, m) "
-            "para estimar f0 y el exponente característico de tu placa real."
+            "Ingresa 2 o más observaciones (frecuencia medida en Hz y modo observado n, m; "
+            "se admiten enteros y decimales) para estimar f0 y el exponente característico de tu placa real."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -68,12 +84,12 @@ class CalibrationDialog(QtWidgets.QDialog):
         self._add_row(f0 * 5.0, 1, 2)
         self._add_row(f0 * 13.0, 2, 3)
 
-    def _add_row(self, freq: float = 500.0, n: int = 1, m: int = 2):
+    def _add_row(self, freq: float = 500.0, n: float = 1, m: float = 2):
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{freq:.2f}"))
-        self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(n)))
-        self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(str(m)))
+        self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{n:g}"))
+        self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{m:g}"))
 
     def _del_row(self):
         curr = self.table.currentRow()
@@ -84,9 +100,9 @@ class CalibrationDialog(QtWidgets.QDialog):
         obs = []
         for r in range(self.table.rowCount()):
             try:
-                f_val = float(self.table.item(r, 0).text())
-                n_val = int(self.table.item(r, 1).text())
-                m_val = int(self.table.item(r, 2).text())
+                f_val = float(self.table.item(r, 0).text().replace(",", "."))
+                n_val = float(self.table.item(r, 1).text().replace(",", "."))
+                m_val = float(self.table.item(r, 2).text().replace(",", "."))
                 if f_val > 0:
                     obs.append((f_val, n_val, m_val))
             except Exception:
@@ -202,13 +218,13 @@ class RecordEditDialog(QtWidgets.QDialog):
     def _build_ui(self):
         layout = QtWidgets.QFormLayout(self)
 
-        self.prog_spin = QtWidgets.QDoubleSpinBox()
+        self.prog_spin = FlexibleDoubleSpinBox()
         self.prog_spin.setRange(10.0, 20000.0)
         self.prog_spin.setValue(self.freq_prog)
         self.prog_spin.setSuffix(" Hz")
         layout.addRow("Frecuencia generador:", self.prog_spin)
 
-        self.tuner_spin = QtWidgets.QDoubleSpinBox()
+        self.tuner_spin = FlexibleDoubleSpinBox()
         self.tuner_spin.setRange(0.0, 20000.0)
         self.tuner_spin.setValue(self.freq_prog)
         self.tuner_spin.setSpecialValueText("No medido")
@@ -257,4 +273,3 @@ class RecordEditDialog(QtWidgets.QDialog):
             photo_path=self.photo_label.text().strip()
         )
         self.accept()
-

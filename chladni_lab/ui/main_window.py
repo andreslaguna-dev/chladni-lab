@@ -18,8 +18,8 @@ from chladni_lab.physics import (best_circular_mode, best_mode, circular_mode_ta
                                 get_bessel_zero, mode_table)
 from chladni_lab.simulation import SandSimulation
 from chladni_lab.storage import ExperimentRecord, ExperimentStorage
-from chladni_lab.ui.dialogs import (CalibrationDialog, RecordEditDialog,
-                                   ResonanceSuggestionDialog)
+from chladni_lab.ui.dialogs import (CalibrationDialog, FlexibleDoubleSpinBox,
+                                   RecordEditDialog, ResonanceSuggestionDialog)
 from chladni_lab.ui.plots import (OscilloscopePlot, PlatePlot, SpectrumPlot,
                                  SweepResponsePlot)
 from chladni_lab.ui.theme import apply_theme, get_stylesheet
@@ -108,7 +108,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         freq_header = QtWidgets.QHBoxLayout()
         freq_header.addWidget(QtWidgets.QLabel("<b>Frecuencia:</b>"))
-        self.freq_spin = QtWidgets.QDoubleSpinBox()
+        self.freq_spin = FlexibleDoubleSpinBox()
         self.freq_spin.setRange(FMIN, FMAX)
         self.freq_spin.setDecimals(2)
         self.freq_spin.setSuffix(" Hz")
@@ -168,8 +168,8 @@ class MainWindow(QtWidgets.QMainWindow):
         sweep_group = QtWidgets.QGroupBox("3. Barrido de Frecuencia (Búsqueda de Resonancias)")
         sw_layout = QtWidgets.QGridLayout(sweep_group)
 
-        self.sw_from = QtWidgets.QDoubleSpinBox()
-        self.sw_to = QtWidgets.QDoubleSpinBox()
+        self.sw_from = FlexibleDoubleSpinBox()
+        self.sw_to = FlexibleDoubleSpinBox()
         for sp, v in ((self.sw_from, 100.0), (self.sw_to, 1200.0)):
             sp.setRange(FMIN, FMAX)
             sp.setValue(v)
@@ -179,7 +179,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sw_layout.addWidget(QtWidgets.QLabel("Hasta:"), 0, 2)
         sw_layout.addWidget(self.sw_to, 0, 3)
 
-        self.sw_time = QtWidgets.QDoubleSpinBox()
+        self.sw_time = FlexibleDoubleSpinBox()
         self.sw_time.setRange(5, 600)
         self.sw_time.setValue(45)
         self.sw_time.setSuffix(" s")
@@ -219,17 +219,19 @@ class MainWindow(QtWidgets.QMainWindow):
         sim_layout.addWidget(self.geom_combo, 0, 1, 1, 2)
 
         sim_layout.addWidget(QtWidgets.QLabel("f0 base:"), 1, 0)
-        self.f0_spin = QtWidgets.QDoubleSpinBox()
-        self.f0_spin.setRange(1.0, 5000.0)
+        self.f0_spin = FlexibleDoubleSpinBox()
+        self.f0_spin.setRange(0.01, 5000.0)
+        self.f0_spin.setDecimals(2)
+        self.f0_spin.setSingleStep(0.1)
         self.f0_spin.setValue(self.cfg.get("f0", 100.0))
         self.f0_spin.setSuffix(" Hz")
         sim_layout.addWidget(self.f0_spin, 1, 1)
 
-        self.exp_spin = QtWidgets.QDoubleSpinBox()
-        self.exp_spin.setRange(0.2, 3.0)
-        self.exp_spin.setValue(self.cfg.get("exponent", 1.0))
+        self.exp_spin = FlexibleDoubleSpinBox()
+        self.exp_spin.setRange(0.1, 5.0)
         self.exp_spin.setDecimals(3)
         self.exp_spin.setSingleStep(0.05)
+        self.exp_spin.setValue(self.cfg.get("exponent", 1.0))
         sim_layout.addWidget(QtWidgets.QLabel("Exponente p:"), 2, 0)
         sim_layout.addWidget(self.exp_spin, 2, 1)
 
@@ -243,13 +245,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         mode_num_row = QtWidgets.QHBoxLayout()
         self.lbl_n = QtWidgets.QLabel("n:")
-        self.spin_n = QtWidgets.QSpinBox()
-        self.spin_n.setRange(0, 12)
-        self.spin_n.setValue(1)
+        self.spin_n = FlexibleDoubleSpinBox()
+        self.spin_n.setRange(0.0, 20.0)
+        self.spin_n.setDecimals(2)
+        self.spin_n.setSingleStep(0.1)
+        self.spin_n.setValue(1.0)
         self.lbl_m = QtWidgets.QLabel("m:")
-        self.spin_m = QtWidgets.QSpinBox()
-        self.spin_m.setRange(1, 12)
-        self.spin_m.setValue(2)
+        self.spin_m = FlexibleDoubleSpinBox()
+        self.spin_m.setRange(0.1, 20.0)
+        self.spin_m.setDecimals(2)
+        self.spin_m.setSingleStep(0.1)
+        self.spin_m.setValue(2.0)
         self.sign_combo = QtWidgets.QComboBox()
         self.sign_combo.addItems(["Simétrico (+)", "Antisimétrico (-)"])
         mode_num_row.addWidget(self.lbl_n)
@@ -805,7 +811,7 @@ class MainWindow(QtWidgets.QMainWindow):
             m = self.spin_m.value()
             if is_circular:
                 base_alpha = get_bessel_zero(0, 1)
-                alpha = get_bessel_zero(n, max(1, m))
+                alpha = get_bessel_zero(n, max(1.0, m)) * min(1.0, m)
                 fm = f0 * (((alpha / base_alpha) ** 2) ** p)
             else:
                 fm = f0 * ((n * n + m * m) ** p)
@@ -817,7 +823,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 n, m, fm, strength_val = best_mode(gen_freq, f0, exponent=p)
             strength = strength_val if playing else 0.0
 
-        degenerate_null = (not is_circular) and (n == m) and (sign == -1)
+        degenerate_null = (not is_circular) and (abs(n - m) < 1e-6) and (sign == -1)
         if degenerate_null:
             strength = 0.0
 
@@ -829,7 +835,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Texto informativo inferior
         geom_name = "Circular" if is_circular else "Cuadrada"
-        mode_label = f"m={n}, n={m}" if is_circular else f"n={n}, m={m}"
+        mode_label = f"m={n:g}, n={m:g}" if is_circular else f"n={n:g}, m={m:g}"
         sym_label = "" if is_circular else (" (simétrico)" if sign == 1 else " (antisimétrico)")
         if degenerate_null:
             self.mode_status_label.setText(

@@ -45,6 +45,12 @@ def test_chladni_fields_and_modes():
     assert np.allclose(chladni_field(1, 2, xx, xx, sign=-1), 0), "la diagonal es nodal en el antisimétrico"
     print("campos (1,2) correctos: simétrico y antisimétrico")
 
+    # Modos decimales (continuos) en placa cuadrada y circular
+    u_dec = chladni_field(1.5, 2.35, xx, yy)
+    assert u_dec.shape == xx.shape and np.all(np.isfinite(u_dec))
+    uc_dec = circular_chladni_field(1.5, 2.35, xx, yy)
+    assert uc_dec.shape == xx.shape and np.all(np.isfinite(uc_dec))
+
     f0 = 100.0
     n, m, fm, s = best_mode(500.0, f0)
     print("modo para 500 Hz:", n, m, fm, round(s, 3))
@@ -65,10 +71,12 @@ def test_sand_simulation_square_and_circular():
     assert after < before * 0.5, (before, after)
     assert sim.x.min() >= 0 and sim.x.max() <= 1 and sim.y.min() >= 0 and sim.y.max() <= 1
 
-    # Placa circular con LUT de Bessel
+    # Placa circular con LUT de Bessel (entero y decimal)
     sim_c = SandSimulation(count=6000, seed=1, geometry="circular")
-    for _ in range(100):
+    for _ in range(50):
         sim_c.step(2, 2, 1.0)
+    for _ in range(50):
+        sim_c.step(1.5, 2.4, 1.0)
     r_c = np.hypot(sim_c.x - 0.5, sim_c.y - 0.5)
     assert r_c.max() <= 0.5, "los granos deben permanecer dentro del radio circular"
 
